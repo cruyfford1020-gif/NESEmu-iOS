@@ -94,16 +94,21 @@ final class NESSystem: ObservableObject {
         return base.appendingPathComponent("captain-tsubasa-2.state")
     }
 
-    // Call once per display refresh (~60Hz); runs enough CPU cycles for one frame
+    // Call once per display refresh (~60Hz); runs enough CPU/PPU clocks for one frame.
     func runFrame() {
         ppu.frameComplete = false
         while !ppu.frameComplete {
             let nmiFired = ppu.clock()
-            // PPU runs 3x CPU speed
-            if ppu.cycle % 3 == 0 {
+
+            // NTSC NES timing is continuous: 3 PPU clocks for every 1 CPU clock.
+            // Do not derive CPU phase from ppu.cycle because that counter resets
+            // every 341-dot scanline and otherwise shifts the CPU/APU phase each line.
+            masterClock &+= 1
+            if masterClock % 3 == 0 {
                 cpu.step()
                 apu.clockCPUCycle()
             }
+
             if nmiFired {
                 cpu.nmi()
             }
@@ -137,6 +142,14 @@ final class NESSystem: ObservableObject {
 
     // MARK: - Audio
     private func setupAudio() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default, options: [])
+        try? session.setPreferredSampleRate(44100)
+        try? session.setPreferredIOBufferDuration(0.010)
+        try? session.setActive(true)
+
+        // The emulator APU produces exactly 44.1 kHz samples. Keep the source
+        // node at 44.1 kHz and let AVAudioEngine convert to the device rate if needed.
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
         let node = AVAudioSourceNode { [weak self] _, _, frameCount, audioBufferList -> OSStatus in
             guard let self = self else { return noErr }
@@ -152,11 +165,6 @@ final class NESSystem: ObservableObject {
         sourceNode = node
         audioEngine.attach(node)
         audioEngine.connect(node, to: audioEngine.mainMixerNode, format: format)
-
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-        try? session.setActive(true)
-
         try? audioEngine.start()
     }
 }

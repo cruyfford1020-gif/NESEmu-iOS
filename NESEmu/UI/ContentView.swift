@@ -10,18 +10,33 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                // Plain black background: no controller skin/background artwork.
                 Color.black.ignoresSafeArea()
 
                 gameScreen
                     .frame(maxWidth: geo.size.width * 0.62,
                            maxHeight: geo.size.height * 0.82)
 
-                // LOAD fixed at top-left, SAVE fixed at top-right.
+                // LOAD + compact circular RESTART on the top-left, SAVE on top-right.
                 VStack {
                     HStack {
-                        actionButton("LOAD", systemImage: "arrow.down.circle.fill") {
-                            showResult(nes.loadState(), success: "Game loaded", failure: "No save found")
+                        HStack(spacing: 10) {
+                            actionButton("LOAD", systemImage: "arrow.down.circle.fill") {
+                                showResult(nes.loadState(), success: "Game loaded", failure: "No save found")
+                            }
+
+                            Button {
+                                nes.restartGame()
+                                showResult(true, success: "Game restarted", failure: "")
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .frame(width: 42, height: 42)
+                                    .background(Color.red.opacity(0.92), in: Circle())
+                                    .overlay(Circle().stroke(Color.white.opacity(0.65), lineWidth: 1.5))
+                                    .foregroundStyle(.white)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Restart")
                         }
 
                         Spacer()
@@ -35,7 +50,6 @@ struct ContentView: View {
                 .padding(.horizontal, 22)
                 .padding(.top, 10)
 
-                // Game controls stay at the bottom edges.
                 VStack {
                     Spacer()
                     HStack(alignment: .bottom) {
@@ -58,24 +72,6 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 28)
                     .padding(.bottom, 18)
-                }
-
-                // RESTART fixed at the bottom center.
-                VStack {
-                    Spacer()
-                    Button {
-                        nes.restartGame()
-                        showResult(true, success: "Game restarted", failure: "")
-                    } label: {
-                        Label("RESTART", systemImage: "arrow.clockwise")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                            .padding(.horizontal, 18)
-                            .frame(height: 44)
-                            .background(Color.red.opacity(0.92), in: Capsule())
-                            .foregroundStyle(.white)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.bottom, 22)
                 }
 
                 if let notice {

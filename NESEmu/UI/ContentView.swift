@@ -40,7 +40,7 @@ struct ContentView: View {
 
                         Spacer()
 
-                        actionButton("SAVE", systemImage: "arrow.up.circle.fill") {
+                        actionButton("خالد", systemImage: "arrow.up.circle.fill", backgroundColor: .red) {
                             showResult(nes.saveState(), success: "Game saved", failure: "Save failed")
                         }
                     }
@@ -103,13 +103,13 @@ struct ContentView: View {
         .aspectRatio(256.0 / 224.0, contentMode: .fit)
     }
 
-    private func actionButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+    private func actionButton(_ title: String, systemImage: String, backgroundColor: Color = .black, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
                 .font(.system(size: 15, weight: .bold, design: .rounded))
                 .padding(.horizontal, 16)
                 .frame(height: 44)
-                .background(Color.black.opacity(0.68), in: Capsule())
+                .background(backgroundColor.opacity(backgroundColor == .black ? 0.68 : 0.92), in: Capsule())
                 .overlay(Capsule().stroke(Color.white.opacity(0.45), lineWidth: 1))
                 .foregroundStyle(.white)
         }

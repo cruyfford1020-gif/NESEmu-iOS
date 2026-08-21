@@ -1,0 +1,76 @@
+name: Build NES Emulator IPA
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: |
+          ls /Applications | grep Xcode
+          LATEST=$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)
+          echo "Using $LATEST"
+          sudo xcode-select -s "$LATEST"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned .app for device
+        run: |
+          set -o pipefail
+          xcodebuild -project NESEmu.xcodeproj \
+            -scheme NESEmu \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build 2>&1 | tee build_output.log
+
+      - name: Save log on failure
+        if: failure()
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git fetch origin build-logs 2>/dev/null || true
+          git checkout -B build-logs
+          tail -n 400 build_output.log > ERROR.log || echo "no log" > ERROR.log
+          git add ERROR.log
+          git commit -m "Build error log $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin build-logs --force
+
+      - name: Package into .ipa
+        run: |
+          BUILD_DIR=$(xcodebuild -project NESEmu.xcodeproj -scheme NESEmu -configuration Release -sdk iphoneos -showBuildSettings | grep -m1 "CONFIGURATION_BUILD_DIR" | awk '{print $3}')
+          mkdir -p Payload
+          cp -r "$BUILD_DIR/NESEmu.app" Payload/
+          zip -r NESEmu.ipa Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NESEmu-ipa
+          path: NESEmu.ipa
+
+      - name: Publish as GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          gh release create "$TAG" NESEmu.ipa \
+            --title "NESEmu build ${{ github.run_number }}" \
+            --notes "Automated unsigned build" \
+            --repo "${{ github.repository }}"

@@ -30,6 +30,15 @@ final class NESSystem: ObservableObject {
         cpu = CPU6502(bus: bus)
         bus.ppu = ppu
         bus.apu = apu
+
+        apu.memoryReader = { [weak bus] addr in
+            bus?.read(addr) ?? 0
+        }
+        apu.requestCPUStall = { [weak bus] cycles in
+            guard let bus else { return }
+            bus.dmaStallCycles += cycles
+        }
+
         setupAudio()
     }
 
@@ -39,6 +48,7 @@ final class NESSystem: ObservableObject {
         self.cart = cart
         bus.cart = cart
         ppu.cart = cart
+        apu.reset()
         cpu.reset()
         ppu.reset()
         bus.dmaStallCycles = 0
@@ -144,10 +154,8 @@ final class NESSystem: ObservableObject {
                 provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
               ) else { return }
 
-        // Consumer CRTs normally hid the outer NES scanlines in overscan.
-        // Captain Tsubasa II deliberately performs palette/VRAM work there,
-        // which appears as colored/garbage strips on a modern full-frame display.
-        // Present the conventional 256x224 safe picture: 8 lines cropped top/bottom.
+        // Hide the outer 8 scanlines on each edge, as consumer CRT overscan did.
+        // Captain Tsubasa II performs visible palette/VRAM work in these border lines.
         image = full.cropping(to: CGRect(x: 0, y: 8, width: 256, height: 224)) ?? full
     }
 
@@ -161,7 +169,7 @@ final class NESSystem: ObservableObject {
 
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
         let node = AVAudioSourceNode { [weak self] _, _, frameCount, audioBufferList -> OSStatus in
-            guard let self = self else { return noErr }
+            guard let self else { return noErr }
             let ablPointer = UnsafeMutableAudioBufferListPointer(audioBufferList)
             for buffer in ablPointer {
                 let bufPtr = UnsafeMutableBufferPointer<Float>(buffer)
@@ -174,9 +182,7 @@ final class NESSystem: ObservableObject {
         sourceNode = node
         audioEngine.attach(node)
 
-        // The NES DAC output is unipolar and real hardware is AC-coupled.
-        // A high-pass stage removes the DC component/clicking that otherwise
-        // reaches the iPhone speaker directly from the simplified mixer.
+        // Real NES audio is AC-coupled. Remove DC from the unipolar APU DAC mix.
         let eq = AVAudioUnitEQ(numberOfBands: 1)
         eq.bands[0].filterType = .highPass
         eq.bands[0].frequency = 45

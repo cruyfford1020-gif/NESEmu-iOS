@@ -1,5 +1,18 @@
 import Foundation
 
+struct CPUState: Codable {
+    let a: UInt8
+    let x: UInt8
+    let y: UInt8
+    let sp: UInt8
+    let pc: UInt16
+    let status: UInt8
+    let cycles: Int
+    let totalCycles: UInt64
+    let pendingNMI: Bool
+    let pendingIRQ: Bool
+}
+
 final class CPU6502 {
     // Registers
     var a: UInt8 = 0
@@ -39,6 +52,20 @@ final class CPU6502 {
         status = 0x24
         a = 0; x = 0; y = 0
         cycles = 8
+    }
+
+    func makeState() -> CPUState {
+        CPUState(a: a, x: x, y: y, sp: sp, pc: pc, status: status,
+                 cycles: cycles, totalCycles: totalCycles,
+                 pendingNMI: pendingNMI, pendingIRQ: pendingIRQ)
+    }
+
+    func restoreState(_ state: CPUState) {
+        a = state.a; x = state.x; y = state.y; sp = state.sp
+        pc = state.pc; status = state.status; cycles = state.cycles
+        totalCycles = state.totalCycles
+        pendingNMI = state.pendingNMI
+        pendingIRQ = state.pendingIRQ
     }
 
     func irq() {

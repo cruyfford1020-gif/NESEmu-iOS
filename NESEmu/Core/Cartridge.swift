@@ -1,5 +1,25 @@
 import Foundation
 
+struct CartridgeState: Codable {
+    let chrRAM: [UInt8]
+    let prgRAM: [UInt8]
+    let mirrorVertical: Bool
+    let m1ShiftRegister: UInt8
+    let m1Control: UInt8
+    let m1ChrBank0: UInt8
+    let m1ChrBank1: UInt8
+    let m1PrgBank: UInt8
+    let m4BankSelect: UInt8
+    let m4Registers: [UInt8]
+    let m4PrgMode: Bool
+    let m4ChrInvert: Bool
+    let m4IrqLatch: UInt8
+    let m4IrqCounter: UInt8
+    let m4IrqEnabled: Bool
+    let m4IrqReloadPending: Bool
+    let irqPending: Bool
+}
+
 final class Cartridge {
     var prgROM: [UInt8] = []
     var chrROM: [UInt8] = []
@@ -65,6 +85,32 @@ final class Cartridge {
             // Default: last two 8KB banks fixed at the top per MMC3 reset state
             m4Registers = [0, 2, 4, 5, 6, 7, 0, 1]
         }
+    }
+
+    func makeState() -> CartridgeState {
+        CartridgeState(chrRAM: chrRAM, prgRAM: prgRAM,
+                       mirrorVertical: mirrorVertical,
+                       m1ShiftRegister: m1ShiftRegister, m1Control: m1Control,
+                       m1ChrBank0: m1ChrBank0, m1ChrBank1: m1ChrBank1,
+                       m1PrgBank: m1PrgBank, m4BankSelect: m4BankSelect,
+                       m4Registers: m4Registers, m4PrgMode: m4PrgMode,
+                       m4ChrInvert: m4ChrInvert, m4IrqLatch: m4IrqLatch,
+                       m4IrqCounter: m4IrqCounter, m4IrqEnabled: m4IrqEnabled,
+                       m4IrqReloadPending: m4IrqReloadPending,
+                       irqPending: irqPending)
+    }
+
+    func restoreState(_ state: CartridgeState) {
+        chrRAM = state.chrRAM; prgRAM = state.prgRAM
+        mirrorVertical = state.mirrorVertical
+        m1ShiftRegister = state.m1ShiftRegister; m1Control = state.m1Control
+        m1ChrBank0 = state.m1ChrBank0; m1ChrBank1 = state.m1ChrBank1
+        m1PrgBank = state.m1PrgBank; m4BankSelect = state.m4BankSelect
+        m4Registers = state.m4Registers; m4PrgMode = state.m4PrgMode
+        m4ChrInvert = state.m4ChrInvert; m4IrqLatch = state.m4IrqLatch
+        m4IrqCounter = state.m4IrqCounter; m4IrqEnabled = state.m4IrqEnabled
+        m4IrqReloadPending = state.m4IrqReloadPending
+        irqPending = state.irqPending
     }
 
     // MARK: - CPU access

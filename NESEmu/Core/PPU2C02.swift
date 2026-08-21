@@ -1,5 +1,25 @@
 import Foundation
 
+struct PPUState: Codable {
+    let nametable: [[UInt8]]
+    let palette: [UInt8]
+    let oam: [UInt8]
+    let ctrl: UInt8
+    let mask: UInt8
+    let status: UInt8
+    let oamAddr: UInt8
+    let vramAddr: UInt16
+    let tempAddr: UInt16
+    let fineX: UInt8
+    let addrLatch: Bool
+    let dataBuffer: UInt8
+    let renderAddr: UInt16
+    let scanline: Int
+    let cycle: Int
+    let frameComplete: Bool
+    let nmiOccurred: Bool
+}
+
 final class PPU2C02 {
     weak var cart: Cartridge?
     var nametable = [[UInt8]](repeating: [UInt8](repeating: 0, count: 1024), count: 2)
@@ -49,6 +69,26 @@ final class PPU2C02 {
         vramAddr = 0; tempAddr = 0; fineX = 0; addrLatch = false
         renderAddr = 0
         scanline = -1; cycle = 0
+    }
+
+    func makeState() -> PPUState {
+        PPUState(nametable: nametable, palette: palette, oam: oam,
+                 ctrl: ctrl, mask: mask, status: status, oamAddr: oamAddr,
+                 vramAddr: vramAddr, tempAddr: tempAddr, fineX: fineX,
+                 addrLatch: addrLatch, dataBuffer: dataBuffer,
+                 renderAddr: renderAddr, scanline: scanline, cycle: cycle,
+                 frameComplete: frameComplete, nmiOccurred: nmiOccurred)
+    }
+
+    func restoreState(_ state: PPUState) {
+        nametable = state.nametable; palette = state.palette; oam = state.oam
+        ctrl = state.ctrl; mask = state.mask; status = state.status
+        oamAddr = state.oamAddr; vramAddr = state.vramAddr
+        tempAddr = state.tempAddr; fineX = state.fineX
+        addrLatch = state.addrLatch; dataBuffer = state.dataBuffer
+        renderAddr = state.renderAddr; scanline = state.scanline
+        cycle = state.cycle; frameComplete = state.frameComplete
+        nmiOccurred = state.nmiOccurred
     }
 
     func cpuRead(_ reg: UInt16) -> UInt8 {

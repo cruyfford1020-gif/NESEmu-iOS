@@ -2,6 +2,14 @@ import Foundation
 import CoreGraphics
 import AVFoundation
 
+private struct NESState: Codable {
+    let busRAM: [UInt8]
+    let cpu: CPUState
+    let ppu: PPUState
+    let cartridge: CartridgeState
+    let masterClock: UInt64
+}
+
 final class NESSystem: ObservableObject {
     let bus = Bus()
     var cpu: CPU6502!
@@ -45,6 +53,45 @@ final class NESSystem: ObservableObject {
         bus.controller1Shift = 0
         bus.controller1Strobe = false
         _ = loadROM(data: data)
+    }
+
+    /// Saves a complete emulator snapshot, including MMC mapper registers.
+    /// The file remains available after closing and reopening the app.
+    func saveState() -> Bool {
+        guard let cart else { return false }
+        let state = NESState(busRAM: bus.ram, cpu: cpu.makeState(),
+                             ppu: ppu.makeState(), cartridge: cart.makeState(),
+                             masterClock: masterClock)
+        do {
+            let data = try JSONEncoder().encode(state)
+            try data.write(to: saveStateURL, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func loadState() -> Bool {
+        guard let data = try? Data(contentsOf: saveStateURL),
+              let state = try? JSONDecoder().decode(NESState.self, from: data),
+              let cart else { return false }
+
+        bus.ram = state.busRAM
+        bus.controller1 = 0
+        bus.controller1Shift = 0
+        bus.controller1Strobe = false
+        cart.restoreState(state.cartridge)
+        cpu.restoreState(state.cpu)
+        ppu.restoreState(state.ppu)
+        masterClock = state.masterClock
+        updateImage()
+        return true
+    }
+
+    private var saveStateURL: URL {
+        let base = FileManager.default.urls(for: .documentDirectory,
+                                            in: .userDomainMask).first!
+        return base.appendingPathComponent("captain-tsubasa-2.state")
     }
 
     // Call once per display refresh (~60Hz); runs enough CPU cycles for one frame

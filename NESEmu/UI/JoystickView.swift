@@ -14,20 +14,16 @@ struct JoystickView: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(.ultraThinMaterial)
-                .overlay(Circle().fill(Color.white.opacity(0.06)))
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+                .fill(Color.white.opacity(0.10))
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.24), lineWidth: 1))
                 .frame(width: baseSize, height: baseSize)
-                .shadow(color: .black.opacity(0.3), radius: 10, y: 6)
 
             Circle()
-                .fill(.thinMaterial)
-                .overlay(Circle().fill(Color.blue.opacity(0.35)))
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.3), lineWidth: 1))
+                .fill(Color.white.opacity(0.26))
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.38), lineWidth: 1))
                 .frame(width: knobSize, height: knobSize)
                 .offset(knobOffset)
-                .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
-                .animation(.interactiveSpring(response: 0.18, dampingFraction: 0.7), value: knobOffset)
+                .animation(.interactiveSpring(response: 0.18, dampingFraction: 0.72), value: knobOffset)
         }
         .frame(width: baseSize, height: baseSize)
         .contentShape(Circle())
@@ -45,34 +41,55 @@ struct JoystickView: View {
     private func update(translation: CGSize) {
         let dx = translation.width
         let dy = translation.height
-        let distance = min(sqrt(dx*dx + dy*dy), radius)
-        let angle = atan2(dy, dx)
-        knobOffset = CGSize(width: cos(angle) * distance, height: sin(angle) * distance)
+        let rawDistance = sqrt(dx * dx + dy * dy)
+        let distance = min(rawDistance, radius)
 
-        let deadzone: CGFloat = 12
-        guard sqrt(dx*dx + dy*dy) > deadzone else {
+        if rawDistance > 0 {
+            let scale = distance / rawDistance
+            knobOffset = CGSize(width: dx * scale, height: dy * scale)
+        } else {
+            knobOffset = .zero
+        }
+
+        let deadzone: CGFloat = 10
+        guard rawDistance > deadzone else {
             clearDirection()
             return
         }
 
-        // 8-way joystick: allow two NES direction bits at the same time.
-        // This is what makes the four corners work (Up+Left, Up+Right,
-        // Down+Left, Down+Right) instead of collapsing every drag to a
-        // single horizontal/vertical direction.
-        let ax = abs(dx)
-        let ay = abs(dy)
-        let diagonalRatio: CGFloat = 0.42
+        // True 8-way NES control. The normalized threshold deliberately keeps
+        // broad diagonal zones so the stick reliably reaches all four corners.
+        let nx = dx / rawDistance
+        let ny = dy / rawDistance
+        let axisThreshold: CGFloat = 0.38
 
         var newDir: UInt8 = 0
-        if ax >= ay * diagonalRatio {
-            newDir |= dx >= 0 ? NESButton.Right : NESButton.Left
+
+        if nx >= axisThreshold {
+            newDir |= NESButton.Right
+        } else if nx <= -axisThreshold {
+            newDir |= NESButton.Left
         }
-        if ay >= ax * diagonalRatio {
-            newDir |= dy >= 0 ? NESButton.Down : NESButton.Up
+
+        if ny >= axisThreshold {
+            newDir |= NESButton.Down
+        } else if ny <= -axisThreshold {
+            newDir |= NESButton.Up
+        }
+
+        // Safety fallback for a vector that lands between thresholds.
+        if newDir == 0 {
+            if abs(nx) > abs(ny) {
+                newDir = nx >= 0 ? NESButton.Right : NESButton.Left
+            } else {
+                newDir = ny >= 0 ? NESButton.Down : NESButton.Up
+            }
         }
 
         if activeDirection != newDir {
-            if let old = activeDirection { onPress(old, false) }
+            if let old = activeDirection {
+                onPress(old, false)
+            }
             onPress(newDir, true)
             activeDirection = newDir
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -80,7 +97,9 @@ struct JoystickView: View {
     }
 
     private func clearDirection() {
-        if let old = activeDirection { onPress(old, false) }
+        if let old = activeDirection {
+            onPress(old, false)
+        }
         activeDirection = nil
     }
 

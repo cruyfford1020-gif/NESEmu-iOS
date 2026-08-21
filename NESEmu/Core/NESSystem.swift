@@ -148,8 +148,9 @@ final class NESSystem: ObservableObject {
         try? session.setPreferredIOBufferDuration(0.010)
         try? session.setActive(true)
 
-        let actualRate = session.sampleRate > 0 ? session.sampleRate : 44100
-        let format = AVAudioFormat(standardFormatWithSampleRate: actualRate, channels: 1)!
+        // The emulator APU produces exactly 44.1 kHz samples. Keep the source
+        // node at 44.1 kHz and let AVAudioEngine convert to the device rate if needed.
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
         let node = AVAudioSourceNode { [weak self] _, _, frameCount, audioBufferList -> OSStatus in
             guard let self = self else { return noErr }
             let ablPointer = UnsafeMutableAudioBufferListPointer(audioBufferList)

@@ -40,6 +40,7 @@ final class NESSystem: ObservableObject {
         ppu.cart = cart
         cpu.reset()
         ppu.reset()
+        bus.dmaStallCycles = 0
         masterClock = 0
         oddFrame = false
         return true
@@ -51,6 +52,7 @@ final class NESSystem: ObservableObject {
         bus.controller1 = 0
         bus.controller1Shift = 0
         bus.controller1Strobe = false
+        bus.dmaStallCycles = 0
         _ = loadROM(data: data)
     }
 
@@ -77,6 +79,7 @@ final class NESSystem: ObservableObject {
         bus.controller1 = 0
         bus.controller1Shift = 0
         bus.controller1Strobe = false
+        bus.dmaStallCycles = 0
         cart.restoreState(state.cartridge)
         cpu.restoreState(state.cpu)
         ppu.restoreState(state.ppu)
@@ -95,10 +98,16 @@ final class NESSystem: ObservableObject {
     // Run one NTSC frame with continuous 3:1 PPU/CPU timing.
     func runFrame() {
         ppu.frameComplete = false
+
+        // Avoid retaining pixels from a previous frame on scanlines where the
+        // game temporarily disables rendering. The emulator's scanline renderer
+        // otherwise leaves those pixels untouched, which produced the thin
+        // colored lines visible above/below Captain Tsubasa II's picture.
+        ppu.framebuffer = [UInt8](repeating: 0, count: 256 * 240 * 4)
+
         while !ppu.frameComplete {
             // Real NTSC 2C02 shortens every odd frame by one PPU dot when
-            // rendering is enabled. Keeping this skip is important for games
-            // such as MMC3 titles whose raster IRQ timing is tied to PPU phase.
+            // rendering is enabled.
             if oddFrame && ppu.scanline == -1 && ppu.cycle == 340 && (ppu.mask & 0x18) != 0 {
                 ppu.cycle = 0
                 ppu.scanline = 0
@@ -109,7 +118,13 @@ final class NESSystem: ObservableObject {
 
             masterClock &+= 1
             if masterClock % 3 == 0 {
-                cpu.step()
+                // OAM DMA halts only the CPU. The APU keeps running on every
+                // CPU clock, so music timing remains synchronized with video.
+                if bus.dmaStallCycles > 0 {
+                    bus.dmaStallCycles -= 1
+                } else {
+                    cpu.step()
+                }
                 apu.clockCPUCycle()
             }
 
@@ -151,8 +166,6 @@ final class NESSystem: ObservableObject {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .default, options: [])
         try? session.setPreferredSampleRate(44100)
-        // A slightly larger hardware buffer reduces underruns when SwiftUI's
-        // 60 Hz timer is delayed for a frame by the system.
         try? session.setPreferredIOBufferDuration(0.020)
         try? session.setActive(true)
 
@@ -163,8 +176,6 @@ final class NESSystem: ObservableObject {
             for buffer in ablPointer {
                 let bufPtr = UnsafeMutableBufferPointer<Float>(buffer)
                 for frame in 0..<Int(frameCount) {
-                    // Never repeat/hold an old APU sample on underrun. Holding the
-                    // previous value creates audible buzzing and pitch artifacts.
                     bufPtr[frame] = self.apu.sampleBuffer.pop()
                 }
             }

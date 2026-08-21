@@ -24,11 +24,21 @@ final class NESSystem: ObservableObject {
 
     private let audioEngine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
+    private var highPass: AVAudioUnitEQ?
 
     init() {
         cpu = CPU6502(bus: bus)
         bus.ppu = ppu
         bus.apu = apu
+
+        apu.memoryReader = { [weak bus] addr in
+            bus?.read(addr) ?? 0
+        }
+        apu.requestCPUStall = { [weak bus] cycles in
+            guard let bus else { return }
+            bus.dmaStallCycles += cycles
+        }
+
         setupAudio()
     }
 
@@ -38,6 +48,7 @@ final class NESSystem: ObservableObject {
         self.cart = cart
         bus.cart = cart
         ppu.cart = cart
+        apu.reset()
         cpu.reset()
         ppu.reset()
         bus.dmaStallCycles = 0
@@ -95,19 +106,11 @@ final class NESSystem: ObservableObject {
         return base.appendingPathComponent("captain-tsubasa-2.state")
     }
 
-    // Run one NTSC frame with continuous 3:1 PPU/CPU timing.
     func runFrame() {
         ppu.frameComplete = false
-
-        // Avoid retaining pixels from a previous frame on scanlines where the
-        // game temporarily disables rendering. The emulator's scanline renderer
-        // otherwise leaves those pixels untouched, which produced the thin
-        // colored lines visible above/below Captain Tsubasa II's picture.
         ppu.framebuffer = [UInt8](repeating: 0, count: 256 * 240 * 4)
 
         while !ppu.frameComplete {
-            // Real NTSC 2C02 shortens every odd frame by one PPU dot when
-            // rendering is enabled.
             if oddFrame && ppu.scanline == -1 && ppu.cycle == 340 && (ppu.mask & 0x18) != 0 {
                 ppu.cycle = 0
                 ppu.scanline = 0
@@ -118,8 +121,6 @@ final class NESSystem: ObservableObject {
 
             masterClock &+= 1
             if masterClock % 3 == 0 {
-                // OAM DMA halts only the CPU. The APU keeps running on every
-                // CPU clock, so music timing remains synchronized with video.
                 if bus.dmaStallCycles > 0 {
                     bus.dmaStallCycles -= 1
                 } else {
@@ -128,12 +129,8 @@ final class NESSystem: ObservableObject {
                 apu.clockCPUCycle()
             }
 
-            if nmiFired {
-                cpu.nmi()
-            }
-            if let cart = cart, cart.irqPending {
-                cpu.irq()
-            }
+            if nmiFired { cpu.nmi() }
+            if let cart = cart, cart.irqPending { cpu.irq() }
         }
 
         oddFrame.toggle()
@@ -141,24 +138,25 @@ final class NESSystem: ObservableObject {
     }
 
     func setButton(_ mask: UInt8, pressed: Bool) {
-        if pressed {
-            bus.controller1 |= mask
-        } else {
-            bus.controller1 &= ~mask
-        }
+        if pressed { bus.controller1 |= mask }
+        else { bus.controller1 &= ~mask }
     }
 
     private func updateImage() {
-        let width = 256, height = 240
+        let fullWidth = 256, fullHeight = 240
         let data = Data(ppu.framebuffer)
-        guard let provider = CGDataProvider(data: data as CFData) else { return }
-        image = CGImage(
-            width: width, height: height,
-            bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
-        )
+        guard let provider = CGDataProvider(data: data as CFData),
+              let full = CGImage(
+                width: fullWidth, height: fullHeight,
+                bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: fullWidth * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
+              ) else { return }
+
+        // Hide the outer 8 scanlines on each edge, as consumer CRT overscan did.
+        // Captain Tsubasa II performs visible palette/VRAM work in these border lines.
+        image = full.cropping(to: CGRect(x: 0, y: 8, width: 256, height: 224)) ?? full
     }
 
     // MARK: - Audio
@@ -171,7 +169,7 @@ final class NESSystem: ObservableObject {
 
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
         let node = AVAudioSourceNode { [weak self] _, _, frameCount, audioBufferList -> OSStatus in
-            guard let self = self else { return noErr }
+            guard let self else { return noErr }
             let ablPointer = UnsafeMutableAudioBufferListPointer(audioBufferList)
             for buffer in ablPointer {
                 let bufPtr = UnsafeMutableBufferPointer<Float>(buffer)
@@ -183,8 +181,17 @@ final class NESSystem: ObservableObject {
         }
         sourceNode = node
         audioEngine.attach(node)
-        audioEngine.connect(node, to: audioEngine.mainMixerNode, format: format)
-        audioEngine.mainMixerNode.outputVolume = 0.95
+
+        // Real NES audio is AC-coupled. Remove DC from the unipolar APU DAC mix.
+        let eq = AVAudioUnitEQ(numberOfBands: 1)
+        eq.bands[0].filterType = .highPass
+        eq.bands[0].frequency = 45
+        eq.bands[0].bypass = false
+        highPass = eq
+        audioEngine.attach(eq)
+        audioEngine.connect(node, to: eq, format: format)
+        audioEngine.connect(eq, to: audioEngine.mainMixerNode, format: format)
+        audioEngine.mainMixerNode.outputVolume = 0.85
         try? audioEngine.start()
     }
 }

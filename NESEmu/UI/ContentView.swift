@@ -16,7 +16,6 @@ struct ContentView: View {
                     .frame(maxWidth: geo.size.width * 0.62,
                            maxHeight: geo.size.height * 0.82)
 
-                // LOAD + compact circular RESTART on the top-left, SAVE on top-right.
                 VStack {
                     HStack {
                         HStack(spacing: 10) {
@@ -98,10 +97,10 @@ struct ContentView: View {
                 Image(decorative: img, scale: 1)
                     .resizable()
                     .interpolation(.none)
-                    .aspectRatio(256.0 / 240.0, contentMode: .fit)
+                    .aspectRatio(256.0 / 224.0, contentMode: .fit)
             }
         }
-        .aspectRatio(256.0 / 240.0, contentMode: .fit)
+        .aspectRatio(256.0 / 224.0, contentMode: .fit)
     }
 
     private func actionButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {

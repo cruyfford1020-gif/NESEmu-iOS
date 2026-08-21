@@ -24,6 +24,7 @@ final class NESSystem: ObservableObject {
 
     private let audioEngine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
+    private var highPass: AVAudioUnitEQ?
 
     init() {
         cpu = CPU6502(bus: bus)
@@ -95,19 +96,11 @@ final class NESSystem: ObservableObject {
         return base.appendingPathComponent("captain-tsubasa-2.state")
     }
 
-    // Run one NTSC frame with continuous 3:1 PPU/CPU timing.
     func runFrame() {
         ppu.frameComplete = false
-
-        // Avoid retaining pixels from a previous frame on scanlines where the
-        // game temporarily disables rendering. The emulator's scanline renderer
-        // otherwise leaves those pixels untouched, which produced the thin
-        // colored lines visible above/below Captain Tsubasa II's picture.
         ppu.framebuffer = [UInt8](repeating: 0, count: 256 * 240 * 4)
 
         while !ppu.frameComplete {
-            // Real NTSC 2C02 shortens every odd frame by one PPU dot when
-            // rendering is enabled.
             if oddFrame && ppu.scanline == -1 && ppu.cycle == 340 && (ppu.mask & 0x18) != 0 {
                 ppu.cycle = 0
                 ppu.scanline = 0
@@ -118,8 +111,6 @@ final class NESSystem: ObservableObject {
 
             masterClock &+= 1
             if masterClock % 3 == 0 {
-                // OAM DMA halts only the CPU. The APU keeps running on every
-                // CPU clock, so music timing remains synchronized with video.
                 if bus.dmaStallCycles > 0 {
                     bus.dmaStallCycles -= 1
                 } else {
@@ -128,12 +119,8 @@ final class NESSystem: ObservableObject {
                 apu.clockCPUCycle()
             }
 
-            if nmiFired {
-                cpu.nmi()
-            }
-            if let cart = cart, cart.irqPending {
-                cpu.irq()
-            }
+            if nmiFired { cpu.nmi() }
+            if let cart = cart, cart.irqPending { cpu.irq() }
         }
 
         oddFrame.toggle()
@@ -141,24 +128,27 @@ final class NESSystem: ObservableObject {
     }
 
     func setButton(_ mask: UInt8, pressed: Bool) {
-        if pressed {
-            bus.controller1 |= mask
-        } else {
-            bus.controller1 &= ~mask
-        }
+        if pressed { bus.controller1 |= mask }
+        else { bus.controller1 &= ~mask }
     }
 
     private func updateImage() {
-        let width = 256, height = 240
+        let fullWidth = 256, fullHeight = 240
         let data = Data(ppu.framebuffer)
-        guard let provider = CGDataProvider(data: data as CFData) else { return }
-        image = CGImage(
-            width: width, height: height,
-            bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
-        )
+        guard let provider = CGDataProvider(data: data as CFData),
+              let full = CGImage(
+                width: fullWidth, height: fullHeight,
+                bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: fullWidth * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
+              ) else { return }
+
+        // Consumer CRTs normally hid the outer NES scanlines in overscan.
+        // Captain Tsubasa II deliberately performs palette/VRAM work there,
+        // which appears as colored/garbage strips on a modern full-frame display.
+        // Present the conventional 256x224 safe picture: 8 lines cropped top/bottom.
+        image = full.cropping(to: CGRect(x: 0, y: 8, width: 256, height: 224)) ?? full
     }
 
     // MARK: - Audio
@@ -183,8 +173,19 @@ final class NESSystem: ObservableObject {
         }
         sourceNode = node
         audioEngine.attach(node)
-        audioEngine.connect(node, to: audioEngine.mainMixerNode, format: format)
-        audioEngine.mainMixerNode.outputVolume = 0.95
+
+        // The NES DAC output is unipolar and real hardware is AC-coupled.
+        // A high-pass stage removes the DC component/clicking that otherwise
+        // reaches the iPhone speaker directly from the simplified mixer.
+        let eq = AVAudioUnitEQ(numberOfBands: 1)
+        eq.bands[0].filterType = .highPass
+        eq.bands[0].frequency = 45
+        eq.bands[0].bypass = false
+        highPass = eq
+        audioEngine.attach(eq)
+        audioEngine.connect(node, to: eq, format: format)
+        audioEngine.connect(eq, to: audioEngine.mainMixerNode, format: format)
+        audioEngine.mainMixerNode.outputVolume = 0.85
         try? audioEngine.start()
     }
 }

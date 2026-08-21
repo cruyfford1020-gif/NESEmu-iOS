@@ -18,6 +18,7 @@ final class NESSystem: ObservableObject {
     var cart: Cartridge?
     private var loadedROMData: [UInt8]?
     private var masterClock: UInt64 = 0
+    private var oddFrame = false
 
     @Published var image: CGImage?
 
@@ -40,12 +41,10 @@ final class NESSystem: ObservableObject {
         cpu.reset()
         ppu.reset()
         masterClock = 0
+        oddFrame = false
         return true
     }
 
-    /// Restart the currently loaded game from the beginning.
-    /// Recreates the cartridge and clears controller/RAM state so it behaves
-    /// like launching the embedded ROM again.
     func restartGame() {
         guard let data = loadedROMData else { return }
         bus.ram = [UInt8](repeating: 0, count: 2048)
@@ -55,8 +54,6 @@ final class NESSystem: ObservableObject {
         _ = loadROM(data: data)
     }
 
-    /// Saves a complete emulator snapshot, including MMC mapper registers.
-    /// The file remains available after closing and reopening the app.
     func saveState() -> Bool {
         guard let cart else { return false }
         let state = NESState(busRAM: bus.ram, cpu: cpu.makeState(),
@@ -84,6 +81,7 @@ final class NESSystem: ObservableObject {
         cpu.restoreState(state.cpu)
         ppu.restoreState(state.ppu)
         masterClock = state.masterClock
+        oddFrame = false
         updateImage()
         return true
     }
@@ -94,15 +92,21 @@ final class NESSystem: ObservableObject {
         return base.appendingPathComponent("captain-tsubasa-2.state")
     }
 
-    // Call once per display refresh (~60Hz); runs enough CPU/PPU clocks for one frame.
+    // Run one NTSC frame with continuous 3:1 PPU/CPU timing.
     func runFrame() {
         ppu.frameComplete = false
         while !ppu.frameComplete {
+            // Real NTSC 2C02 shortens every odd frame by one PPU dot when
+            // rendering is enabled. Keeping this skip is important for games
+            // such as MMC3 titles whose raster IRQ timing is tied to PPU phase.
+            if oddFrame && ppu.scanline == -1 && ppu.cycle == 340 && (ppu.mask & 0x18) != 0 {
+                ppu.cycle = 0
+                ppu.scanline = 0
+                continue
+            }
+
             let nmiFired = ppu.clock()
 
-            // NTSC NES timing is continuous: 3 PPU clocks for every 1 CPU clock.
-            // Do not derive CPU phase from ppu.cycle because that counter resets
-            // every 341-dot scanline and otherwise shifts the CPU/APU phase each line.
             masterClock &+= 1
             if masterClock % 3 == 0 {
                 cpu.step()
@@ -116,6 +120,8 @@ final class NESSystem: ObservableObject {
                 cpu.irq()
             }
         }
+
+        oddFrame.toggle()
         updateImage()
     }
 
@@ -145,11 +151,11 @@ final class NESSystem: ObservableObject {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .default, options: [])
         try? session.setPreferredSampleRate(44100)
-        try? session.setPreferredIOBufferDuration(0.010)
+        // A slightly larger hardware buffer reduces underruns when SwiftUI's
+        // 60 Hz timer is delayed for a frame by the system.
+        try? session.setPreferredIOBufferDuration(0.020)
         try? session.setActive(true)
 
-        // The emulator APU produces exactly 44.1 kHz samples. Keep the source
-        // node at 44.1 kHz and let AVAudioEngine convert to the device rate if needed.
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
         let node = AVAudioSourceNode { [weak self] _, _, frameCount, audioBufferList -> OSStatus in
             guard let self = self else { return noErr }
@@ -157,7 +163,9 @@ final class NESSystem: ObservableObject {
             for buffer in ablPointer {
                 let bufPtr = UnsafeMutableBufferPointer<Float>(buffer)
                 for frame in 0..<Int(frameCount) {
-                    bufPtr[frame] = self.apu.sampleBuffer.popOrHold()
+                    // Never repeat/hold an old APU sample on underrun. Holding the
+                    // previous value creates audible buzzing and pitch artifacts.
+                    bufPtr[frame] = self.apu.sampleBuffer.pop()
                 }
             }
             return noErr
@@ -165,6 +173,7 @@ final class NESSystem: ObservableObject {
         sourceNode = node
         audioEngine.attach(node)
         audioEngine.connect(node, to: audioEngine.mainMixerNode, format: format)
+        audioEngine.mainMixerNode.outputVolume = 0.95
         try? audioEngine.start()
     }
 }
